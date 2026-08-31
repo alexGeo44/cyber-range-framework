@@ -1,0 +1,40 @@
+name: simple-scenario
+seed: 43
+
+nodes:
+  cloud: 1
+  fog: 1
+  edge: 1
+  
+  resources:
+    cloud:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+
+    fog:
+      requests:
+        cpu: "250m"
+        memory: "256Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+
+    edge:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+workloads:
+  count: 5
+
+vulnerabilities:
+  count: 2
+
+
