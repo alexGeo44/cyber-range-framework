@@ -26,12 +26,14 @@ from scenario_engine.generator import (
     save_workloads,
     save_services,
     save_network_policies,
+    save_vulnerability_resources,
     clean_manifest_directory,
 )
 
 from scenario_engine.vulnerability_catalog import (
     select_vulnerabilities,
     inject_vulnerabilities,
+    generate_vulnerability_resources,
 )
 
 from scenario_engine.ground_truth import (
@@ -46,9 +48,11 @@ from scenario_engine.artifacts import (
     prepare_experiment_directory
 )
 
+import json
+
 def main():
     scenario = load_scenario("scenarios/simple.yaml")
-    
+
     namespace = f"cyber-range-{scenario.name}-{scenario.seed}"
 
     experiment_dir = (
@@ -58,7 +62,7 @@ def main():
     manifests_dir = (
         f"{experiment_dir}/manifests"
     )
-    
+
     prepare_experiment_directory(
         experiment_dir
     )
@@ -77,7 +81,7 @@ def main():
 
     print("Scenario loaded successfully")
     print(scenario)
-    print(f"Experiment namespace: {namespace}")
+    print(f"\nExperiment namespace: {namespace}")
 
 
     print("\nValidating cluster nodes...")
@@ -88,7 +92,7 @@ def main():
 
     if not cluster_valid:
         print("\nCluster validation failed")
-        
+
         validation_path = save_validation_report(
                 scenario=scenario,
                 namespace=namespace,
@@ -111,7 +115,7 @@ def main():
         )
 
         return
-    
+
     print("\nCluster validation successful")
 
     print("\nValidating node taints...")
@@ -186,8 +190,9 @@ def main():
 
     aggregate_resources_valid = validate_aggregate_resources(
         workloads,
+        namespace,
     )
-    
+
     if not aggregate_resources_valid:
         print("\nAggregate resource validation failed")
 
@@ -219,7 +224,7 @@ def main():
 
     services = generate_services(workloads)
     relationships = generate_relationships(workloads)
-    
+
     default_deny_policies = generate_default_deny_policies(
         workloads
     )
@@ -238,7 +243,12 @@ def main():
         workloads,
         selected_vulnerabilities,
     )
-    
+
+    vulnerability_resources = generate_vulnerability_resources(
+        workloads,
+        selected_vulnerabilities,
+    )
+
 
     print("\nGenerated workloads:")
 
@@ -251,7 +261,7 @@ def main():
             ["metadata"]
             ["labels"]
             ["workload-type"]
-        )  
+        )
 
         node_type = (
             workload["spec"]
@@ -325,6 +335,11 @@ def main():
         output_dir=manifests_dir,
     )
 
+    save_vulnerability_resources(
+        vulnerability_resources,
+        output_dir=manifests_dir,
+    )
+
 
 
     print(f"\nWorkload, service and network policy manifests saved in {manifests_dir}")
@@ -334,7 +349,7 @@ def main():
         f"\nResetting experiment namespace: "
         f"{namespace}"
     )
-    
+
     reset_namespace(namespace)
 
     print("\nDeploying manifests to Kubernetes...")
@@ -365,7 +380,7 @@ def main():
 
         if scenario_valid:
             print("\nScenario validation successful")
-            
+
             print("\nValidating workload tolerations...")
 
             workload_tolerations_valid = (
@@ -383,7 +398,7 @@ def main():
                 print(
                     "\nWorkload toleration failed"
                 )
-                     
+
                 validation_path = save_validation_report(
                         scenario=scenario,
                         namespace=namespace,
@@ -449,11 +464,11 @@ def main():
                     namespace=namespace,
                 )
             )
-            
-            
+
+
             if vulnerabilities_valid:
                 print("\nVulnerability validation successful")
-                
+
                 ground_truth_path = save_ground_truth(
                     scenario,
                     validated_vulnerabilities,
@@ -464,7 +479,7 @@ def main():
                     f"\nVerified ground truth saved to "
                     f"{ground_truth_path}"
                 )
-                              
+
 
             else:
                 print("\nVulnerability validation failed")
@@ -472,7 +487,7 @@ def main():
         else:
             print("\nScenario validation failed")
 
-      
+
     validation_path = save_validation_report(
         scenario=scenario,
         namespace=namespace,
@@ -493,7 +508,7 @@ def main():
         f"\nValidation report saved to "
         f"{validation_path}"
     )
-        
+
 
 if __name__ == "__main__":
     main()

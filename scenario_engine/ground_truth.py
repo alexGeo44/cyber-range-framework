@@ -16,7 +16,7 @@ def save_ground_truth(
     ground_truth = {
             "scenario": scenario.name,
             "seed": scenario.seed,
-            "vulnerabilitites": selected_vulnerabilities,
+            "vulnerabilities": selected_vulnerabilities,
     }
 
     file_path = output_path / "ground_truth.json"

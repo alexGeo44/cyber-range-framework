@@ -27,6 +27,25 @@ def get_pods(namespace: str = "default"):
     return json.loads(result.stdout)
 
 
+def get_all_pods():
+    result = subprocess.run(
+        [
+            "kubectl",
+            "get",
+            "pods",
+            "-A",
+            "-o",
+            "json"
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    return json.loads(result.stdout)
+
+
+
 def get_nodes():
     result = subprocess.run(
         [
@@ -169,9 +188,9 @@ def validate_workloads(
             )
             success = False
             continue
-        
+
         actual_node_type = node_types.get(node_name)
-        
+
         if actual_node_type != expected_node_type:
             print(
                 f"[FAIL] {workload_name}: "
@@ -221,7 +240,7 @@ def create_probe_pod(
                     "operator": "Equal",
                     "value": node_type,
                     "effect": "NoSchedule",
-                   
+
                 }
             ],
             "containers": [
@@ -276,7 +295,7 @@ def wait_for_probe(
             text=True,
             capture_output=True,
         )
-        
+
         if result.returncode != 0:
             time.sleep(interval)
             continue
@@ -410,7 +429,7 @@ def validate_network_topology(
             )
             success = False
             continue
-        
+
         for target in workload_names:
             if source == target:
                 continue
@@ -431,14 +450,14 @@ def validate_network_topology(
                 source,
                 target,
             ) in allowed_pairs
-            
+
             if actual_allowed == expected_allowed:
                 state = (
                     "allowed"
                     if actual_allowed
                     else "blocked"
                 )
-                
+
                 print(
                     f"[OK] {source} -> {target}: "
                     f"{state}"
@@ -474,7 +493,7 @@ def validate_vulnerabilities(
 
     for vulnerability in selected_vulnerabilities:
         target = vulnerability["target"]
-        vulnerability_id = vulnerability["vulnerability_id"] 
+        vulnerability_id = vulnerability["vulnerability_id"]
 
         matching_pods = []
 
@@ -507,7 +526,7 @@ def validate_vulnerabilities(
             )
             success = False
             continue
-        
+
         container = containers[0]
 
         security_context = container.get(
@@ -533,7 +552,129 @@ def validate_vulnerabilities(
         elif vulnerability_id == "privileged_container":
             is_valid = (
                 security_context.get("privileged") is True
-            ) 
+            )
+
+        elif vulnerability_id == "unconfined_seccomp_profile":
+            seccomp_profile = security_context.get(
+                "seccompProfile",
+                {},
+            )
+
+            is_valid = (
+                seccomp_profile.get("type") == "Unconfined"
+            )
+
+        elif vulnerability_id in (
+            "add_sys_admin",
+            "add_net_admin",
+            "add_sys_ptrace",
+        ):
+            capability_map = {
+                "add_sys_admin": "SYS_ADMIN",
+                "add_net_admin": "NET_ADMIN",
+                "add_sys_ptrace": "SYS_PTRACE",
+            }
+
+            added_capabilities = (
+                security_context
+                .get("capabilities", {})
+                .get("add", [])
+            )
+
+            expected_capability = capability_map[
+                vulnerability_id
+            ]
+
+            is_valid = (
+                expected_capability in added_capabilities
+            )
+
+        elif vulnerability_id == "host_network":
+            is_valid = (
+                pod["spec"].get("hostNetwork") is True
+            )
+
+        elif vulnerability_id == "host_pid":
+            is_valid = (
+                pod["spec"].get("hostPID") is True
+            )
+
+        elif vulnerability_id == "host_ipc":
+            is_valid = (
+                pod["spec"].get("hostIPC") is True
+            )
+
+        elif vulnerability_id == "host_path_mount":
+            volumes = pod["spec"].get(
+                "volumes",
+                []
+            )
+
+            volume_mounts = container.get(
+                "volumeMounts",
+                []
+            )
+
+            host_volume_found = any(
+                volume.get("name") == "host-etc"
+                and volume.get("hostPath", {}).get("path") == "/etc"
+                and volume.get("hostPath", {}).get("type") == "Directory"
+                for volume in volumes
+            )
+
+            host_mount_found = any(
+                mount.get("name") == "host-etc"
+                and mount.get("mountPath") == "/host-etc"
+                and mount.get("readOnly") is True
+                for mount in volume_mounts
+            )
+
+            is_valid = (
+                host_volume_found
+                and host_mount_found
+            )
+
+        elif vulnerability_id == "writable_host_path":
+            volumes = pod["spec"].get(
+                "volumes",
+                []
+            )
+
+            volume_mounts = container.get(
+                "volumeMounts",
+                []
+            )
+
+            host_volume_found = any(
+                volume.get("name") == "host-tmp"
+                and volume.get("hostPath", {}).get("path") == "/tmp"
+                and volume.get("hostPath", {}).get("type") == "Directory"
+                for volume in volumes
+            )
+
+            writable_mount_found = any(
+                mount.get("name") == "host-tmp"
+                and mount.get("mountPath") == "/host-tmp"
+                and mount.get("readOnly", False) is False
+                for mount in volume_mounts
+            )
+
+            is_valid = (
+                host_volume_found
+                and writable_mount_found
+            )
+
+        elif vulnerability_id == "automount_service_account_token":
+            is_valid = (
+                pod["spec"].get("automountServiceAccountToken") is True
+            )
+
+        elif vulnerability_id == "overprivileged_service_account":
+            is_valid = validate_overprivileged_service_account(
+                pod,
+                target,
+                namespace,
+            )
 
         if is_valid:
             print(
@@ -550,7 +691,7 @@ def validate_vulnerabilities(
             )
 
             success = False
-                
+
     return success, validated
 
 def validate_cluster_nodes(scenario):
@@ -764,7 +905,7 @@ def validate_workload_resources(
         requests_valid = (
             actual_requests == expected_requests
         )
-        
+
         limits_valid = (
             actual_limits == expected_limits
         )
@@ -781,7 +922,7 @@ def validate_workload_resources(
                 f"[FAIL] {workload_name}: "
                 f"resource mismatch"
             )
-            
+
             print(
                 f"expected request="
                 f"{expected_requests}"
@@ -801,18 +942,183 @@ def validate_workload_resources(
                 f"actual limits="
                 f"{actual_limits}"
             )
-            
+
             success = False
 
     return success
 
+def calculate_pod_requests(pod_spec):
+    regular_cpu = 0.0
+    regular_memory = 0.0
+
+    for container in pod_spec.get("containers", []):
+        requests = (
+            container
+            .get("resources", {})
+            .get("requests", {})
+        )
+
+        cpu = requests.get("cpu")
+        memory = requests.get("memory")
+
+        if cpu is not None:
+            regular_cpu += parse_cpu(cpu)
+
+        if memory is not None:
+            regular_memory += parse_memory(memory)
+
+    restartable_init_cpu = 0.0
+    restartable_init_memory =0.0
+
+    max_init_cpu = 0.0
+    max_init_memory = 0.0
+
+    for container in pod_spec.get("initContainers", []):
+        requests = (
+            container
+            .get("resources", {})
+            .get("requests", {})
+        )
+
+        cpu = requests.get("cpu")
+        memory = requests.get("memory")
+
+        cpu_value = (
+            parse_cpu(cpu)
+            if cpu is not None
+            else 0.0
+        )
+
+        memory_value = (
+            parse_memory(memory)
+            if memory is not None
+            else 0.0
+        )
+
+        if container.get("restartPolicy") == "Always":
+            restartable_init_cpu += cpu_value
+            restartable_init_memory += memory_value
+        else:
+            max_init_cpu = max(
+                max_init_cpu,
+                restartable_init_cpu + cpu_value
+            )
+
+            max_init_memory = max(
+                max_init_memory,
+                restartable_init_memory + memory_value,
+            )
+
+    overhead = pod_spec.get("overhead", {})
+
+    overhead_cpu = 0.0
+    overhead_memory = 0.0
+
+    if overhead.get("cpu") is not None:
+        overhead_cpu = parse_cpu(
+            overhead["cpu"]
+        )
+
+    if overhead.get("memory") is not None:
+        overhead_memory = parse_memory(
+            overhead["memory"]
+        )
+
+    return {
+        "cpu": (
+            max(
+                regular_cpu + restartable_init_cpu,
+                max_init_cpu,
+            )
+            + overhead_cpu
+        ),
+        "memory": (
+            max(
+                regular_memory + restartable_init_memory,
+                max_init_memory,
+            )
+            + overhead_memory
+        ),
+    }
+
+def can_place_workloads_on_nodes(
+    workloads,
+    nodes,
+):
+
+    workloads = sorted(
+        workloads,
+        key=lambda workload: (
+            workload["cpu"],
+            workload["memory"],
+        ),
+        reverse=True,
+    )
+
+    remaining = {
+        node_name: {
+            "cpu": resources["cpu"],
+            "memory": resources["memory"],
+        }
+        for node_name, resources in nodes.items()
+    }
+
+    def place_workload(index):
+        if index == len(workloads):
+            return True
+
+        workload = workloads[index]
+
+        for node_resources in remaining.values():
+            if (
+                workload["cpu"] <= node_resources["cpu"]
+                and workload["memory"] <= node_resources["memory"]
+            ):
+                node_resources["cpu"] -= workload["cpu"]
+                node_resources["memory"] -= workload["memory"]
+
+                if place_workload(index + 1):
+                    return True
+
+                node_resources["cpu"] += workload["cpu"]
+                node_resources["memory"] += workload["memory"]
+
+        return False
+
+    return place_workload(0)
+
+
 
 def validate_aggregate_resources(
     workloads,
+    namespace: str,
 ):
     nodes_data = get_nodes()
+    pods_data = get_all_pods()
 
-    success = True 
+    success = True
+
+    node_type_by_name = {}
+    capacity_by_node = {}
+
+    for node in nodes_data["items"]:
+        node_name = node["metadata"]["name"]
+        labels = node["metadata"].get("labels", {})
+        node_type = labels.get("node-type")
+
+        if node_type in ("cloud", "fog", "edge"):
+            node_type_by_name[node_name] = node_type
+
+            allocatable = node["status"].get(
+                "allocatable",
+                {},
+            )
+
+            capacity_by_node[node_name] = {
+                "node_type": node_type,
+                "cpu": parse_cpu(allocatable["cpu"]),
+                "memory": parse_memory(allocatable["memory"]),
+            }
 
     capacity_by_type = {
         "cloud": {
@@ -821,12 +1127,36 @@ def validate_aggregate_resources(
         },
         "fog": {
             "cpu": 0.0,
-            "memory":0.0,
+            "memory": 0.0,
         },
         "edge": {
             "cpu": 0.0,
             "memory": 0.0,
         },
+    }
+
+    used_by_type = {
+        "cloud": {
+            "cpu": 0.0,
+            "memory": 0.0,
+        },
+        "fog": {
+            "cpu": 0.0,
+            "memory": 0.0,
+        },
+        "edge": {
+            "cpu": 0.0,
+            "memory": 0.0,
+        },
+    }
+
+
+    used_by_node = {
+        node_name: {
+            "cpu": 0.0,
+            "memory": 0.0,
+        }
+        for node_name in capacity_by_node
     }
 
     for node in nodes_data["items"]:
@@ -854,6 +1184,60 @@ def validate_aggregate_resources(
             parse_memory(allocatable["memory"])
         )
 
+    for pod in pods_data["items"]:
+        pod_phase = pod.get("status", {}).get("phase")
+
+        if pod_phase in ("Succeeded", "Failed"):
+            continue
+
+        pod_namespace = pod["metadata"].get("namespace")
+
+        if pod_namespace == namespace:
+            continue
+
+        node_name = pod["spec"].get("nodeName")
+
+        if not node_name:
+            continue
+
+        node_type = node_type_by_name.get(node_name)
+
+        if node_type is None:
+            continue
+
+        pod_requests = calculate_pod_requests(
+            pod["spec"]
+        )
+
+        used_by_type[node_type]["cpu"] += (
+            pod_requests["cpu"]
+        )
+
+        used_by_type[node_type]["memory"] += (
+            pod_requests["memory"]
+        )
+
+        if node_name in used_by_node:
+            used_by_node[node_name]["cpu"] += (
+                pod_requests["cpu"]
+            )
+
+            used_by_node[node_name]["memory"] += (
+                pod_requests["memory"]
+            )
+
+    available_by_node = {}
+
+    for node_name, capacity in capacity_by_node.items():
+        used = used_by_node[node_name]
+
+        available_by_node[node_name] = {
+            "node_type": capacity["node_type"],
+            "cpu": capacity["cpu"] - used["cpu"],
+            "memory": capacity["memory"] - used["memory"],
+        }
+
+
 
     requested_by_type = {
         "cloud": {
@@ -870,6 +1254,12 @@ def validate_aggregate_resources(
         },
     }
 
+    workload_requests_by_type = {
+        "cloud": [],
+        "fog": [],
+        "edge": [],
+    }
+
     for workload in workloads:
         pod_spec = (
             workload["spec"]
@@ -881,20 +1271,24 @@ def validate_aggregate_resources(
                 pod_spec["nodeSelector"]["node-type"]
         )
 
-        container = pod_spec["containers"][0]
+        pod_requests = calculate_pod_requests(
+            pod_spec
+        )
 
-        requests = (
-            container
-            .get("resources", {})
-            .get("requests", {})
+        workload_requests_by_type[node_type].append(
+            {
+                "name": workload["metadata"]["name"],
+                "cpu": pod_requests["cpu"],
+                "memory": pod_requests["memory"],
+            }
         )
 
         requested_by_type[node_type]["cpu"] += (
-                parse_cpu(requests["cpu"])
+            pod_requests["cpu"]
         )
 
         requested_by_type[node_type]["memory"] += (
-                parse_memory(requests["memory"])
+            pod_requests["memory"]
         )
 
     for node_type in requested_by_type:
@@ -905,13 +1299,15 @@ def validate_aggregate_resources(
         requested_memory = (
             requested_by_type[node_type]["memory"]
         )
-                
+
         available_cpu = (
             capacity_by_type[node_type]["cpu"]
+            - used_by_type[node_type]["cpu"]
          )
 
         available_memory = (
             capacity_by_type[node_type]["memory"]
+            - used_by_type[node_type]["memory"]
         )
 
         cpu_valid = (
@@ -925,21 +1321,45 @@ def validate_aggregate_resources(
         if cpu_valid and memory_valid:
             print(
                 f"[OK] node-type={node_type}: "
-                f"requested_cpu={requested_cpu}, "
-                f"available_cpu={available_cpu}, "
-                f"requested_memory={requested_memory}, "
-                f"available_memory={available_memory}"
+                f"requested_cpu={requested_cpu:.2f}, "
+                f"available_cpu={available_cpu:.2f}, "
+                f"requested_memory={requested_memory:.0f}, "
+                f"available_memory={available_memory:.0f}"
              )
         else:
             print(
                 f"[FAIL] node-type={node_type}: "
-                f"requested_cpu={requested_cpu}, "
-                f"available_cpu={available_cpu}, "
-                f"requested_memory={requested_memory}, "
-                f"available_memory={available_memory}"
+                f"requested_cpu={requested_cpu:.2f}, "
+                f"available_cpu={available_cpu:.2f}, "
+                f"requested_memory={requested_memory:.0f}, "
+                f"available_memory={available_memory:.0f}"
             )
 
             success = False
+
+        nodes_for_type = {
+            node_name: resources
+            for node_name, resources in available_by_node.items()
+            if resources["node_type"] == node_type
+        }
+
+        placement_valid = can_place_workloads_on_nodes(
+            workload_requests_by_type[node_type],
+            nodes_for_type,
+        )
+
+        if placement_valid:
+            print(
+                f"[OK] node-type={node_type}: "
+                f"per-node placement feasible"
+            )
+        else:
+            print(
+                f"[FAIL] node-type={node_type}: "
+                f"per-node placement not feasible"
+            )
+            success = False
+
 
     return success
 
@@ -1034,7 +1454,7 @@ def validate_workload_tolerations(
 
             if labels.get("app") == workload_name:
                 matching_pods.append(pod)
-            
+
         if not matching_pods:
             print(
                 f"[FAIL] {workload_name}: "
@@ -1081,3 +1501,179 @@ def validate_workload_tolerations(
             success = False
 
     return success
+
+def get_namespaced_resource(
+    kind: str,
+    name: str,
+    namespace: str,
+):
+    result = subprocess.run(
+        [
+            "kubectl",
+            "get",
+            kind,
+            name,
+            "-n",
+            namespace,
+            "-o",
+            "json"
+        ],
+        text=True,
+        capture_output=True,
+    )
+
+    if result.returncode != 0:
+        return None
+
+    return json.loads(result.stdout)
+
+def can_service_account(
+    service_account_name: str,
+    verb: str,
+    resource: str,
+    namespace: str,
+) -> bool:
+    subject = (
+        f"system:serviceaccount:"
+        f"{namespace}:"
+        f"{service_account_name}"
+    )
+
+    result = subprocess.run(
+        [
+            "kubectl",
+            "auth",
+            "can-i",
+            verb,
+            resource,
+            "--as",
+            subject,
+            "-n",
+            namespace,
+
+        ],
+        text=True,
+        capture_output=True,
+    )
+
+    return (
+        result.returncode == 0
+        and result.stdout.strip() == "yes"
+    )
+
+def validate_overprivileged_service_account(
+    pod,
+    target: str,
+    namespace: str,
+) -> bool:
+    service_account_name = f"{target}-overprivileged-sa"
+    role_name = f"{target}-overprivileged-role"
+    role_binding_name = f"{target}-overprivileged-binding"
+
+    service_account= get_namespaced_resource(
+        "serviceaccount",
+        service_account_name,
+        namespace,
+    )
+
+    role = get_namespaced_resource(
+        "role",
+        role_name,
+        namespace,
+    )
+
+    role_binding = get_namespaced_resource(
+        "rolebinding",
+        role_binding_name,
+        namespace,
+    )
+
+    pod_uses_service_account = (
+        pod["spec"].get("serviceAccountName")
+        == service_account_name
+    )
+
+    service_account_exists = (
+        service_account is not None
+    )
+
+    role_binding_valid = False
+
+    if role_binding is not None:
+        subjects = role_binding.get(
+            "subjects",
+            [],
+        )
+
+        role_ref = role_binding.get(
+            "roleRef",
+            {},
+        )
+
+        subject_found = any(
+            subject.get("kind") == "ServiceAccount"
+            and subject.get("name") == service_account_name
+            for subject in subjects
+        )
+
+        role_ref_valid = (
+            role_ref.get("apiGroup")
+            == "rbac.authorization.k8s.io"
+            and role_ref.get("kind") == "Role"
+            and role_ref.get("name") == role_name
+        )
+
+        role_binding_valid = (
+            subject_found
+            and role_ref_valid
+        )
+
+    role_permissions_valid = False
+
+    if role is not None:
+        rules = role.get(
+            "rules",
+            [],
+        )
+
+        role_permissions_valid = any(
+            rule.get("apiGroups") == [""]
+            and "pods" in rule.get("resources", [])
+            and "secrets" in rule.get("resources", [])
+            and "get" in rule.get("verbs", [])
+            and "list" in rule.get("verbs", [])
+            for rule in rules
+        )
+
+    can_get_secrets = can_service_account(
+        service_account_name,
+        "get",
+        "secrets",
+        namespace,
+    )
+
+
+    can_list_secrets = can_service_account(
+        service_account_name,
+        "list",
+        "secrets",
+        namespace,
+    )
+
+
+    cannot_delete_secrets = not can_service_account(
+        service_account_name,
+        "delete",
+        "secrets",
+        namespace,
+    )
+
+    return (
+        pod_uses_service_account
+        and service_account_exists
+        and role_binding_valid
+        and role_permissions_valid
+        and can_get_secrets
+        and can_list_secrets
+        and cannot_delete_secrets
+    )

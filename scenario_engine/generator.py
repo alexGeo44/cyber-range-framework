@@ -45,7 +45,7 @@ def generate_deployment(
         "apiVersion": "apps/v1",
         "kind": "Deployment",
         "metadata": {
-            "name" : name 
+            "name" : name
         },
         "spec": {
             "replicas": 1,
@@ -62,6 +62,7 @@ def generate_deployment(
                     }
                 },
                 "spec": {
+                    "automountServiceAccountToken": False,
                     "nodeSelector": {
                         "node-type": node_type
                     },
@@ -288,7 +289,7 @@ def generate_relationships(workloads):
                 "target": database_workloads[0],
                 "type": "database",
             })
-    
+
     return relationships
 
 def generate_network_policy(
@@ -423,3 +424,31 @@ def clean_manifest_directory(
         parents=True,
         exist_ok=True,
     )
+
+def save_vulnerability_resources(
+    resources,
+    output_dir: str = "generated",
+
+):
+    output_path = Path(output_dir)
+
+    output_path.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    for resource in resources:
+        kind = resource["kind"].lower()
+        name = resource["metadata"]["name"]
+
+        file_path = (
+            output_path
+            / f"{kind}-{name}.yaml"
+        )
+
+        with file_path.open("w") as file:
+            yaml.safe_dump(
+                resource,
+                file,
+                sort_keys=False,
+            )
