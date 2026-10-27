@@ -1,0 +1,31 @@
+target_name: vulnerable-web
+repository: bkimminich/juice-shop
+ref: v20.3.0
+scope: Curated Juice Shop vulnerability findings included in the evaluation reference set for this exact image digest
+
+image_digest: sha256:cea5a4af4aacee498c491491af0408934ec81d004035c0a02ef3e54395e3bf27
+commit_sha: null
+
+
+complete: false
+
+findings:
+  - finding_id: juice-shop-sqli-001
+    title: SQL Injection
+    category: injection
+    severity: high
+    affected_component: authentication
+    endpoint: /rest/user/login
+    expected_evidence: SQL injection behavior is observable in the authentication flow 
+    source: repository
+    reference: https://github.com/juice-shop/juice-shop/blob/v20.3.0/routes/login.ts
+
+  - finding_id: juice-shop-xss-reflected-001
+    title: Reflected Cross-Site Scripting
+    category: xss
+    severity: high
+    affected_component: order-tracking
+    endpoint: /rest/track-order/:id
+    expected_evidence: User-controlled order identifiers can trigger reflected XSS behavior in the order tracking flow
+    source: repository
+    reference: https://github.com/juice-shop/juice-shop/blob/v20.3.0/routes/trackOrder.ts

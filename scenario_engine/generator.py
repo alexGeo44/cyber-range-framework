@@ -7,7 +7,7 @@ import random
 
 from scenario_engine.models import ScenarioConfig
 from scenario_engine.catalog import WORKLOAD_CATALOG
-
+from scenario_engine.target_provider import TargetDefinition
 
 def generate_deployment(
     name: str,
@@ -83,6 +83,142 @@ def generate_deployment(
     }
 
     return deployment
+
+def generate_target_deployment(
+    target: TargetDefinition,
+    node_type: str,
+    resources,
+) -> Dict[str, Any]:
+    
+    container = {
+        "name": target.name,
+        "image": target.image,
+        "ports": [
+            {
+                "containerPort": target.port,
+            }  
+        ],
+        "resources": {
+            "requests": {
+                "cpu": resources.requests.cpu,
+                "memory": resources.requests.memory,
+            },
+            "limits": {
+                "cpu": resources.limits.cpu,
+                "memory": resources.limits.memory,
+            },
+        },
+    }
+
+    if target.environment:
+        container["env"] = [
+            {
+                "name": key,
+                "value": value
+            }
+            for key,value in target.environment.items()
+        ]
+
+    deployment = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+            "name": target.name,
+        },
+        "spec": {
+            "replicas": 1,
+            "selector": {
+                "matchLabels": {
+                    "app": target.name,
+                }
+            },
+            "template": {
+                "metadata": {
+                    "labels": {
+                        "app": target.name,
+                        "target-source": target.source.value,
+                    }
+                },
+                "spec": {
+                    "automountServiceAccountToken": False,
+                    "nodeSelector": {
+                        "node-type": node_type,
+                    },
+                    "tolerations": [
+                        {
+                            "key": "node-type",
+                            "operator": "Equal",
+                            "value": node_type,
+                            "effect": "NoSchedule",
+                        }
+                    ],
+                    "containers": [
+                        container,
+                    ],
+                },
+            },
+        },
+    }
+
+    return deployment
+
+def save_target_resources(
+    deployment: Dict[str, Any],
+    service: Dict[str, Any],
+    output_dir: str = "generated/manifests",
+) -> None:
+
+    output_path = Path(output_dir)
+    output_path.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    resources = [
+        deployment,
+        service,
+    ]
+
+    for resource in resources:
+        kind = resource["kind"].lower()
+        name = resource["metadata"]["name"]
+
+        file_path = output_path / f"{kind}-{name}.yaml"
+
+        with file_path.open("w") as file:
+            yaml.safe_dump(
+                resource,
+                file,
+                sort_keys=False,
+            )
+
+def generate_target_service(
+    target: TargetDefinition,
+) -> Dict[str, Any]:
+    
+    service = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+            "name": f"{target.name}-service"
+        },
+        "spec": {
+            "selector": {
+                "app": target.name,
+            },
+            "ports": [
+                {
+                    "port": target.port,
+                    "targetPort": target.port,
+                }
+            ],
+            "type": "ClusterIP",
+        },
+    }
+
+    return service
+
+
 
 def generate_workloads(scenario):
     rng = random.Random(scenario.seed)

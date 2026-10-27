@@ -14,6 +14,7 @@ from scenario_engine.validator import (
     validate_aggregate_resources,
     validate_node_taints,
     validate_workload_tolerations,
+    validate_target_service,
 )
 
 from scenario_engine.loader import load_scenario
@@ -23,12 +24,17 @@ from scenario_engine.generator import (
     generate_relationships,
     generate_network_policies,
     generate_default_deny_policies,
+    generate_target_deployment,
+    generate_target_service,
     save_workloads,
     save_services,
     save_network_policies,
     save_vulnerability_resources,
+    save_target_resources,
     clean_manifest_directory,
 )
+
+from scenario_engine.target_catalog_loader import select_target
 
 from scenario_engine.vulnerability_catalog import (
     select_vulnerabilities,
@@ -47,6 +53,12 @@ from scenario_engine.validation_report import (
 from scenario_engine.artifacts import (
     prepare_experiment_directory
 )
+
+from scenario_engine.target_evaluation import (
+    evaluate_agent_findings_file,
+)
+
+from pathlib import Path
 
 import json
 
@@ -73,10 +85,18 @@ def main():
     resources_valid = False
     aggregate_resources_valid = False
     workload_resources_valid = False
+    target_valid = False
     scenario_valid = False
     network_valid = False
     vulnerabilities_valid = False
     validated_vulnerabilities = []
+
+    evaluation = None
+
+    agent_findings_path = Path(
+        experiment_dir,
+        "agent_findings.json"
+    )
 
 
     print("Scenario loaded successfully")
@@ -102,6 +122,7 @@ def main():
                 resources_valid=resources_valid,
                 aggregate_resources_valid=aggregate_resources_valid,
                 workload_resources_valid=workload_resources_valid,
+                target_valid=target_valid,
                 scenario_valid=scenario_valid,
                 network_valid=network_valid,
                 vulnerabilities_valid=vulnerabilities_valid,
@@ -136,6 +157,7 @@ def main():
                 resources_valid=resources_valid,
                 aggregate_resources_valid=aggregate_resources_valid,
                 workload_resources_valid=workload_resources_valid,
+                target_valid=target_valid,
                 scenario_valid=scenario_valid,
                 network_valid=network_valid,
                 vulnerabilities_valid=vulnerabilities_valid,
@@ -168,6 +190,7 @@ def main():
             resources_valid=resources_valid,
             aggregate_resources_valid=aggregate_resources_valid,
             workload_resources_valid=workload_resources_valid,
+            target_valid=target_valid,
             scenario_valid=scenario_valid,
             network_valid=network_valid,
             vulnerabilities_valid=vulnerabilities_valid,
@@ -186,10 +209,34 @@ def main():
 
     workloads = generate_workloads(scenario)
 
+    target = select_target()
+
+    print("\nSelected target:")
+    print(" name:", target.name)
+    print(" image:", target.image)
+    print(" port:", target.port)
+    print(" evaluation_mode:", target.evaluation_mode)
+
+    target_node_type = (
+        scenario.target.node_type
+    )
+
+    target_resources = scenario.nodes.resources[target_node_type]
+
+    target_deployment = generate_target_deployment(
+        target=target,
+        node_type=target_node_type,
+        resources=target_resources,
+    )
+
+    target_service = generate_target_service(target)
+
+    workloads_with_target = workloads + [target_deployment]
+
     print("\nValidating aggregate workload resources...")
 
     aggregate_resources_valid = validate_aggregate_resources(
-        workloads,
+        workloads_with_target,
         namespace,
     )
 
@@ -205,11 +252,13 @@ def main():
             resources_valid=resources_valid,
             aggregate_resources_valid=aggregate_resources_valid,
             workload_resources_valid=workload_resources_valid,
+            target_valid=target_valid,
             scenario_valid=scenario_valid,
             network_valid=network_valid,
             vulnerabilities_valid=vulnerabilities_valid,
             validated_vulnerabilities=validated_vulnerabilities,
             output_dir=experiment_dir,
+            target=target,
         )
 
         print(
@@ -340,6 +389,12 @@ def main():
         output_dir=manifests_dir,
     )
 
+    save_target_resources(
+        deployment=target_deployment,
+        service=target_service,
+        output_dir=manifests_dir,
+    )
+    
 
 
     print(f"\nWorkload, service and network policy manifests saved in {manifests_dir}")
@@ -362,9 +417,9 @@ def main():
     print("\nWaiting for workloads to become ready...")
 
     ready = wait_for_workloads(
-        workloads,
+        workloads_with_target,
         namespace=namespace,
-        timeout=60,
+        timeout=300,
         interval=2
     )
 
@@ -383,11 +438,9 @@ def main():
 
             print("\nValidating workload tolerations...")
 
-            workload_tolerations_valid = (
-                validate_workload_tolerations(
-                    workloads,
+            workload_tolerations_valid = validate_workload_tolerations(
+                    workloads_with_target,
                     namespace=namespace,
-                )
             )
 
             if workload_tolerations_valid:
@@ -408,11 +461,13 @@ def main():
                         resources_valid=resources_valid,
                         aggregate_resources_valid=aggregate_resources_valid,
                         workload_resources_valid=workload_resources_valid,
+                        target_valid=target_valid,
                         scenario_valid=scenario_valid,
                         network_valid=network_valid,
                         vulnerabilities_valid=vulnerabilities_valid,
                         validated_vulnerabilities=validated_vulnerabilities,
                         output_dir=experiment_dir,
+                        target=target,
                 )
 
                 print(
@@ -426,7 +481,7 @@ def main():
             print("\nValidating workload resources...")
 
             workload_resources_valid = validate_workload_resources(
-                workloads,
+                workloads_with_target,
                 scenario,
                 namespace=namespace,
             )
@@ -439,6 +494,19 @@ def main():
                 print(
                     "\nWorkload resource validation failed"
                 )
+
+            print("\nValidating target service...")
+
+            target_valid = validate_target_service(
+                target_deployment,
+                target_service,
+                namespace=namespace,
+            )
+
+            if target_valid:
+                print("\nTarget service validation successful")
+            else:
+                print("\nTarget service validation failed")
 
 
             print("\nValidating network topology...")
@@ -488,6 +556,22 @@ def main():
             print("\nScenario validation failed")
 
 
+    if agent_findings_path.exists():
+        print("\nEvaluating agent findings...")
+
+        evaluation = evaluate_agent_findings_file(
+            target,
+            str(agent_findings_path),
+        )
+
+        print(
+            "\nAgent finding evaluation completed:"
+            f"  matched={evaluation.matched_count},"
+            f"  unmatched={evaluation.unmatched_count},"
+            f" precision={evaluation.precision}"
+        )
+
+
     validation_path = save_validation_report(
         scenario=scenario,
         namespace=namespace,
@@ -497,11 +581,14 @@ def main():
         resources_valid=resources_valid,
         aggregate_resources_valid=aggregate_resources_valid,
         workload_resources_valid=workload_resources_valid,
+        target_valid=target_valid,
         scenario_valid=scenario_valid,
         network_valid=network_valid,
         vulnerabilities_valid=vulnerabilities_valid,
         validated_vulnerabilities=validated_vulnerabilities,
-        output_dir=experiment_dir
+        output_dir=experiment_dir,
+        target=target,
+        evaluation=evaluation,
     )
 
     print(

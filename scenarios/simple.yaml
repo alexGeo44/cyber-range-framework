@@ -37,4 +37,8 @@ workloads:
 vulnerabilities:
   count: 2
 
+target:
+  name: vulnerable-web
+  node_type: cloud
+
 

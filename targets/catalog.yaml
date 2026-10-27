@@ -1,0 +1,34 @@
+targets:
+  - name: vulnerable-web
+    display_name: OWASP Juice Shop
+    origin: docker_hub
+    repository: bkimminich/juice-shop
+    ground_truth_key: juice-shop
+    port: 3000
+    evaluation_mode: unknown_ground_truth
+    ground_truth_available: false
+    manual_validation: true
+
+  - name: webgoat
+    display_name: OWASP WebGoat
+    origin: docker_hub
+    repository: webgoat/webgoat
+    ground_truth_key: webgoat
+    port: 8080
+    evaluation_mode: unknown_ground_truth
+    ground_truth_available: false
+    manual_validation: true
+    environment:
+      WEBGOAT_HOST: "0.0.0.0"
+
+  - name: dvwa
+    display_name: Damn Vulnerable Web Application
+    origin: github
+    repository: digininja/DVWA
+    ref: 068d974487a297c155c48722f9fcf7180a83adc4
+    dockerfile: Dockerfile
+    ground_truth_key: dvwa
+    port: 80
+    evaluation_mode: unknown_ground_truth
+    ground_truth_available: false
+    manual_validation: true

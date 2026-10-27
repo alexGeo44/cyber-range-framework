@@ -85,7 +85,10 @@ def wait_for_workloads(
 
                 if (
                     labels.get("app") == workload_name
-                    and "workload-type" in labels
+                    and( 
+                        "workload-type" in labels
+                        or "target-source" in labels
+                    )
                 ):
                     matching_pods.append(pod)
 
@@ -356,6 +359,129 @@ def test_tcp_connectivity(
     )
 
     return result.returncode == 0
+
+def validate_target_service(
+    target_deployment,
+    target_service,
+    namespace: str = "default"
+) -> bool:
+    
+    target_name = target_deployment["metadata"]["name"]
+    service_name = target_service["metadata"]["name"]
+    target_port = target_service["spec"]["ports"][0]["port"]
+
+    node_type = (
+        target_deployment["spec"]
+        ["template"]
+        ["spec"]
+        ["nodeSelector"]
+        ["node-type"]
+    )
+
+    endpoints_result = subprocess.run(
+        [
+            "kubectl",
+            "get",
+            "endpoints",
+            service_name,
+            "-n",
+            namespace,
+            "-o",
+            "json",
+        ],
+        text=True,
+        capture_output=True,
+    )
+
+    if endpoints_result.returncode != 0:
+        print(
+            f"[FAIL] {target_name}: "
+            f"service {service_name} has no endpoints resource"
+        )
+        return False
+
+    endpoints = json.loads(endpoints_result.stdout)
+
+    subsets = endpoints.get("subsets", [])
+
+    ready_addresses = []
+
+    for subset in subsets:
+        ready_addresses.extend(
+            subset.get("addresses", [])
+        )
+
+    if not ready_addresses:
+        print(
+            f"[FAIL] {target_name}: "
+            f"service {service_name} has no ready endpoints"
+        )
+        return False
+
+    probe_name = f"probe-target-{target_name}"
+
+    delete_probe_pod(
+        probe_name,
+        namespace=namespace,
+    )
+
+    create_probe_pod(
+        name=probe_name,
+        app_label=probe_name,
+        node_type=node_type,
+        namespace=namespace,
+    )
+
+    if not wait_for_probe(
+        probe_name,
+        namespace=namespace,
+    ):
+        print(
+            f"[FAIL] {target_name}: "
+            f"could not start reachability probe"
+        )
+
+        delete_probe_pod(
+            probe_name,
+            namespace=namespace,
+        )
+
+        return False
+
+    reachable = False
+
+    for _ in range(15):
+        reachable = test_tcp_connectivity(
+            probe_name=probe_name,
+            target_service=service_name,
+            target_port=target_port,
+            namespace=namespace,
+        )
+
+        if reachable:
+            break
+
+        time.sleep(2)
+
+    delete_probe_pod(
+        probe_name,
+        namespace=namespace,
+    )
+
+    if not reachable:
+        print(
+            f"[FAIL] {target_name}: "
+            f"{service_name}:{target_port} is not reachable"
+        )
+        return False
+
+    print(
+        f"[OK] {target_name}: "
+        f"{service_name}:{target_port} "
+        f"has ready endpoint(s) and is reachable"
+    )
+
+    return True
 
 
 def validate_network_topology(

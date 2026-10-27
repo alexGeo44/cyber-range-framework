@@ -1,0 +1,30 @@
+target_name: dvwa
+repository: digininja/DVWA
+ref: 068d974487a297c155c48722f9fcf7180a83adc4
+scope: All curated DVWA vulnerability modules included in the evaluation reference set for this exact commit
+
+image_digest: null
+commit_sha: 068d974487a297c155c48722f9fcf7180a83adc4
+
+complete: false
+
+findings:
+  - finding_id: dvwa-sqli-001
+    title: SQL Injection
+    category: injection
+    severity: high
+    affected_component: sqli
+    endpoint: /vulnerabilities/sqli/
+    expected_evidence: SQL injection behavior is observable in the SQL Injection module
+    source: repository
+    reference: https://github.com/digininja/DVWA/blob/068d974487a297c155c48722f9fcf7180a83adc4/vulnerabilities/sqli/index.php
+
+  - finding_id: dvwa-xss-reflected-001
+    title: Reflected Cross-Site Scripting
+    category: xss
+    severity: high
+    affected_component: xss_r
+    endpoint: /vulnerabilities/xss_r/
+    expected_evidence: User-controlled input is reflected into the response in the vulnerable module
+    source: repository
+    reference: https://github.com/digininja/DVWA/blob/068d974487a297c155c48722f9fcf7180a83adc4/vulnerabilities/xss_r/index.php
